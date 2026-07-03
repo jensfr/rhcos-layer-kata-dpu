@@ -1,0 +1,3 @@
+*.rpm
+pull-secret*
+*.kubeconfig
