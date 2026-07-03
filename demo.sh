@@ -44,7 +44,7 @@ type_cmd "oc get nodes"
 
 comment "Patched kata-containers RPM (3.31.0-3) with 17 backported commits"
 NODE=$(oc get nodes -o jsonpath='{.items[0].metadata.name}')
-type_cmd "oc debug node/$NODE -- chroot /host rpm -q --changelog kata-containers 2>&1 | grep -A2 '3.31.0-3' | grep -v '^Starting\|^Removing\|^To use'"
+type_cmd "oc debug node/$NODE -- chroot /host bash -c 'rpm -q kata-containers qemu-kvm-core virtiofsd && echo --- && rpm -q --changelog kata-containers | head -4' 2>&1 | grep -v '^Starting\|^Removing\|^To use'"
 
 comment "kata-coldplug RuntimeClass with cold_plug_vfio enabled"
 type_cmd "oc get runtimeclass"
