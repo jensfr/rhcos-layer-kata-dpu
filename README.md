@@ -3,6 +3,8 @@
 RHCOS layered image and deployment manifests for testing the DPU/SR-IOV
 cold-plug VFIO backport (upstream PR #13103) on OpenShift Sandboxed Containers.
 
+![Demo](demo.gif)
+
 ## What's included
 
 - **Patched kata-containers RPM** (3.31.0-3): 17 commits from upstream PR #13103
