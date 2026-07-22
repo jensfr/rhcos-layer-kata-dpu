@@ -52,7 +52,7 @@ type_cmd "oc get nodes"
 comment "4 VFIO VFs available for Kata pods"
 type_cmd "oc get node nvd-srv-27.nvidia.eng.rdu2.dc.redhat.com -o json | jq '.status.allocatable | with_entries(select(.key | contains(\"kata\") or contains(\"vfio\")))'"
 
-comment "Kata pod running with kata-coldplug RuntimeClass + DPU VF"
+comment "Kata pod running with kata-coldplug RuntimeClass + DPU VF (hot-plug workaround -- cold-plug has a code bug)"
 type_cmd "oc get pod -n test-kata mellanox-x86 -o wide"
 
 comment "It is a real VM with its own kernel"
@@ -67,8 +67,14 @@ type_cmd "oc exec -n test-kata mellanox-x86 -- dmesg | grep mlx5 | head -5"
 comment "eth0 interface created by mlx5_core"
 type_cmd "oc exec -n test-kata mellanox-x86 -- ip addr show eth0"
 
-comment "L2 connectivity: ARP to OVN gateway resolves"
+comment "Physical hardware: FIBRE port, 200Gbps capable"
+type_cmd "oc exec -n test-kata mellanox-x86 -- ethtool eth0 2>&1 | head -6"
+
+comment "L2 connectivity: ARP to OVN gateway resolves through the DPU hardware"
 type_cmd "oc exec -n test-kata mellanox-x86 -- ip neigh show dev eth0"
+
+comment "This proves the VF is connected to the DPU switching fabric"
+sleep 2
 
 comment "Configuration that made it work"
 NODE=nvd-srv-27.nvidia.eng.rdu2.dc.redhat.com
@@ -96,4 +102,4 @@ echo "  Branch: dpu-hotplug-workaround"
 echo "  Report: dpu-kata-integration-report.md"
 echo "================================================================"
 echo -e "\033[0m"
-sleep 4
+sleep 10
