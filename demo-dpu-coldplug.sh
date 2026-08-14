@@ -34,12 +34,14 @@ pause
 NODE=$(oc get pod kata-dpu-test -o jsonpath='{.spec.nodeName}')
 
 echo "--- 4. QEMU runs with VFIO-passthrough BlueField VF ---"
-run "oc debug node/$NODE -- chroot /host ps aux '|' grep 'vfio-pci,host'" 2>&1 | grep -v "Starting\|Removing\|Temporary"
+echo -e "\033[1;32m\$ oc debug node/\$NODE -- chroot /host ps aux | grep vfio-pci\033[0m"
+oc debug node/$NODE -- chroot /host bash -c 'ps aux | grep qemu-kvm | grep -o "vfio-pci,host=[^ ]*"' 2>&1 | grep vfio
 pause
 
 echo "--- 5. VF bound to vfio-pci with IOMMU on host ---"
 VF_PCI=$(oc debug node/$NODE -- chroot /host bash -c 'ps aux | grep qemu-kvm | grep -oP "host=\K[0-9a-f:.]+(?=,)"' 2>&1 | grep "0000:")
-run "oc debug node/$NODE -- chroot /host bash -c 'echo PCI: $VF_PCI; echo Driver: \$(basename \$(readlink /sys/bus/pci/devices/$VF_PCI/driver)); echo IOMMU: group \$(basename \$(readlink /sys/bus/pci/devices/$VF_PCI/iommu_group))'" 2>&1 | grep -E "PCI:|Driver|IOMMU"
+echo -e "\033[1;32m\$ oc debug node/\$NODE -- chroot /host cat /sys/bus/pci/devices/$VF_PCI/{driver,iommu_group}\033[0m"
+oc debug node/$NODE -- chroot /host bash -c "echo PCI: $VF_PCI; echo Driver: \$(basename \$(readlink /sys/bus/pci/devices/$VF_PCI/driver)); echo IOMMU: group \$(basename \$(readlink /sys/bus/pci/devices/$VF_PCI/iommu_group))" 2>&1 | grep -E "PCI:|Driver|IOMMU"
 pause
 
 echo "--- 6. Inside the VM: eth0 MAC matches OVN assignment ---"
@@ -59,7 +61,8 @@ run "oc exec kata-dpu-test -- cat /proc/net/arp"
 pause
 
 echo "--- 10. Host has NO access to VF (VFIO isolation) ---"
-run "oc debug node/$NODE -- chroot /host bash -c 'echo Driver: \$(basename \$(readlink /sys/bus/pci/devices/$VF_PCI/driver)); ls /sys/bus/pci/devices/$VF_PCI/net/ 2>&1 || echo No netdev -- VF is inside the VM'" 2>&1 | grep -v "Starting\|Removing\|Temporary"
+echo -e "\033[1;32m\$ oc debug node/\$NODE -- chroot /host ls /sys/bus/pci/devices/$VF_PCI/net/\033[0m"
+oc debug node/$NODE -- chroot /host bash -c "echo Driver: \$(basename \$(readlink /sys/bus/pci/devices/$VF_PCI/driver)); ls /sys/bus/pci/devices/$VF_PCI/net/ 2>&1 || echo '(empty -- VF is inside the VM, not on host)'" 2>&1 | grep -v "Starting\|Removing\|Temporary"
 pause
 
 echo "================================================================"
