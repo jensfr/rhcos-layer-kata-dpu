@@ -64,8 +64,11 @@ echo "--- 10. VF representor active on DPU (traffic path) ---"
 if [ -f "$DOCA_KUBECONFIG" ]; then
   DPU_OVN=$(KUBECONFIG=$DOCA_KUBECONFIG oc get pods -n dpf-operator-system -o name 2>/dev/null | grep ovn | head -1)
   if [ -n "$DPU_OVN" ]; then
-    echo -e "\033[1;32m\$ KUBECONFIG=\$DOCA_KUBECONFIG oc exec -n dpf-operator-system \$DPU_OVN -c ovn-controller -- ovs-vsctl list-ports br-int | grep pf1\033[0m"
-    KUBECONFIG=$DOCA_KUBECONFIG timeout 15 oc exec -n dpf-operator-system ${DPU_OVN#pod/} -c ovn-controller -- ovs-vsctl list-ports br-int 2>/dev/null | grep pf1
+    OVN_POD=${DPU_OVN#pod/}
+    echo -e "\033[1;32m\$ KUBECONFIG=\$DOCA_KUBECONFIG oc exec \$DPU_OVN -c ovn-controller -- ovs-vsctl list interface pf1vf*\033[0m"
+    KUBECONFIG=$DOCA_KUBECONFIG timeout 15 oc exec -n dpf-operator-system $OVN_POD -c ovn-controller -- bash -c '
+      ovs-vsctl list interface pf1vf* 2>/dev/null | grep -E "name|external_ids|link_state|statistics" | head -4
+    ' 2>/dev/null
   fi
 else
   echo "  (DOCA kubeconfig not set, skipping)"
