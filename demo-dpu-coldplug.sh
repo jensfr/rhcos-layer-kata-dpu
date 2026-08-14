@@ -60,7 +60,19 @@ echo "--- 9. ARP to gateway resolves (L2 connectivity) ---"
 run "oc exec kata-dpu-test -- cat /proc/net/arp"
 pause
 
-echo "--- 10. Host has NO access to VF (VFIO isolation) ---"
+echo "--- 10. VF representor active on DPU (traffic path) ---"
+if [ -f "$DOCA_KUBECONFIG" ]; then
+  DPU_OVN=$(KUBECONFIG=$DOCA_KUBECONFIG oc get pods -n dpf-operator-system -o name 2>/dev/null | grep ovn | head -1)
+  if [ -n "$DPU_OVN" ]; then
+    echo -e "\033[1;32m\$ KUBECONFIG=\$DOCA_KUBECONFIG oc exec -n dpf-operator-system \$DPU_OVN -c ovn-controller -- ovs-vsctl list-ports br-int | grep pf1\033[0m"
+    KUBECONFIG=$DOCA_KUBECONFIG timeout 15 oc exec -n dpf-operator-system ${DPU_OVN#pod/} -c ovn-controller -- ovs-vsctl list-ports br-int 2>/dev/null | grep pf1
+  fi
+else
+  echo "  (DOCA kubeconfig not set, skipping)"
+fi
+pause
+
+echo "--- 11. Host has NO access to VF (VFIO isolation) ---"
 echo -e "\033[1;32m\$ oc debug node/\$NODE -- chroot /host ls /sys/bus/pci/devices/$VF_PCI/net/\033[0m"
 oc debug node/$NODE -- chroot /host bash -c "echo Driver: \$(basename \$(readlink /sys/bus/pci/devices/$VF_PCI/driver)); ls /sys/bus/pci/devices/$VF_PCI/net/ 2>&1 || echo '(empty -- VF is inside the VM, not on host)'" 2>&1 | grep -v "Starting\|Removing\|Temporary"
 pause
