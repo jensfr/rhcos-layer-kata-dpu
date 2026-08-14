@@ -1,0 +1,6 @@
+{"version":3,"term":{"cols":80,"rows":24,"type":"xterm-256color"},"timestamp":1786711242,"command":"bash demo-dpu-coldplug.sh","title":"Kata + BlueField-3 DPU Cold-Plug VFIO","env":{"SHELL":"/bin/zsh"}}
+[0.026, "o", "================================================================\r\n  Kata Containers + BlueField-3 DPU Cold-Plug VFIO Demo\r\n"]
+[0.000, "o", "================================================================\r\n\r\n"]
+[2.010, "o", "--- 1. Pod is running with kata-coldplug RuntimeClass ---\r\n"]
+[0.810, "o", "Error from server (NotFound): pods \"kata-dpu-test\" not found\r\n"]
+[0.010, "x", "1"]
