@@ -3,7 +3,7 @@
 RHCOS layered image and deployment manifests for testing the DPU/SR-IOV
 cold-plug VFIO backport (upstream PR #13103) on OpenShift Sandboxed Containers.
 
-![Demo](demo.gif)
+![Demo: Kata VM with cold-plugged BlueField-3 VF](demo-dpu-coldplug.gif)
 
 ## What's included
 
