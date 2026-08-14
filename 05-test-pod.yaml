@@ -1,10 +1,22 @@
+# Test pod for DPU kata cold-plug validation
+# Prerequisites:
+#   - Mellanox OVN-K webhook deployed with runtimeClassMappings for this RuntimeClass
+#   - NodeSRIOVDevicePluginConfig with dedicated netdev VF pool for kata
+#   - Adjust the resource name below to match your DPF device plugin resource
 apiVersion: v1
 kind: Pod
 metadata:
-  name: kata-coldplug-test
+  name: kata-dpu-test
 spec:
   runtimeClassName: kata-coldplug
   containers:
   - name: test
     image: registry.access.redhat.com/ubi9/ubi-minimal:latest
     command: ["sleep", "300"]
+    resources:
+      limits:
+        # Replace with your DPF device plugin kata VF resource name
+        # e.g. nvidia.com/bf3-p0-kata-vfs or openshift.io/kata_vfio_vfs
+        REPLACE_WITH_KATA_VF_RESOURCE: "1"
+      requests:
+        REPLACE_WITH_KATA_VF_RESOURCE: "1"

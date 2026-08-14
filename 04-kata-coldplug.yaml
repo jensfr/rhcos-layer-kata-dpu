@@ -17,7 +17,7 @@ spec:
       - path: /etc/kata-containers/config.d/50-coldplug.toml
         mode: 0644
         contents:
-          source: "data:text/plain;charset=utf-8;base64,W2h5cGVydmlzb3IucWVtdV0KaG90X3BsdWdfdmZpbyA9ICJuby1wb3J0Igpjb2xkX3BsdWdfdmZpbyA9ICJyb290LXBvcnQiCg=="
+          source: "data:text/plain;charset=utf-8;base64,W2h5cGVydmlzb3IucWVtdV0KY29sZF9wbHVnX3ZmaW8gPSAicm9vdC1wb3J0Igpob3RfcGx1Z192ZmlvID0gIm5vLXBvcnQiCnBjaWVfcm9vdF9wb3J0ID0gMgoKW3J1bnRpbWVdCnZmaW9fbW9kZSA9ICJndWVzdC1rZXJuZWwiCnN0YXRpY19zYW5kYm94X3Jlc291cmNlX21nbXQgPSB0cnVlCnNhbmRib3hfY2dyb3VwX29ubHkgPSB0cnVlCgo="
 ---
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
