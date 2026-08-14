@@ -38,19 +38,13 @@ RUN echo -e '[kata-local]\nname=kata-local\nbaseurl=file:///tmp/rpms\nenabled=1\
     rpm-ostree cleanup -m && \
     rm -rf /tmp/rpms /etc/yum.repos.d/kata-local.repo
 
-# CRI-O drop-in for kata-coldplug runtime handler
-COPY 50-kata-coldplug /etc/crio/crio.conf.d/50-kata-coldplug
-
-# kata-coldplug configuration: copy base config and enable cold_plug_vfio
-RUN mkdir -p /etc/kata-containers/kata-coldplug && \
-    cp /etc/kata-containers/configuration.toml /etc/kata-containers/kata-coldplug/configuration.toml && \
-    sed -i \
-      -e 's/^hot_plug_vfio = .*/# hot_plug_vfio = "no-port"/' \
-      -e 's/^cold_plug_vfio = .*/cold_plug_vfio = "root-port"/' \
-      /etc/kata-containers/kata-coldplug/configuration.toml
-
 # Add mlx5/InfiniBand kernel modules to kata guest initrd dracut config
+# RHEL kernel ships these as modules (=m), upstream kata has them built-in (=y)
 RUN echo 'drivers+=" mlx5_core mlxfw ib_core ib_uverbs ib_umad mlx5_ib "' >> \
     /usr/libexec/kata-containers/osbuilder/dracut/dracut.conf.d/15-dracut.conf
+
+# Enable IOMMU via bootc kargs drop-in (required for vfio-pci)
+RUN mkdir -p /usr/lib/bootc/kargs.d && \
+    echo 'kargs = ["intel_iommu=on", "iommu=pt"]' > /usr/lib/bootc/kargs.d/iommu.toml
 
 RUN ostree container commit
