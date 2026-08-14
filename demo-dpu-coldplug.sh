@@ -58,11 +58,28 @@ echo "--- 6. Inside the VM: eth0 has the OVN-assigned MAC ---"
 oc exec kata-dpu-test -- cat /sys/class/net/eth0/address
 pause
 
-echo "--- 7. ARP to gateway resolves (L2 connectivity proven) ---"
+echo "--- 7. VM network stats (100 GbE BlueField VF) ---"
+oc exec kata-dpu-test -- bash -c '
+  for f in rx_packets tx_packets rx_bytes tx_bytes; do
+    printf "  %-12s %s\n" "$f:" "$(cat /sys/class/net/eth0/statistics/$f)"
+  done
+  echo "  operstate:   $(cat /sys/class/net/eth0/operstate)"
+  echo "  speed:       $(cat /sys/class/net/eth0/speed) Mbps"
+  echo "  mtu:         $(cat /sys/class/net/eth0/mtu)"
+  echo "  carrier:     $(cat /sys/class/net/eth0/carrier)"
+'
+pause
+
+echo "--- 8. mlx5 driver loaded in guest VM ---"
+oc exec kata-dpu-test -- cat /proc/modules 2>/dev/null | grep mlx5 || \
+  oc exec kata-dpu-test -- bash -c 'ls /sys/class/net/eth0/device/driver/' 2>/dev/null
+pause
+
+echo "--- 9. ARP to gateway resolves (L2 connectivity proven) ---"
 oc exec kata-dpu-test -- cat /proc/net/arp
 pause
 
-echo "--- 8. VF representor visible on DPU (pf1vf*) ---"
+echo "--- 10. VF representor visible on DPU (pf1vf*) ---"
 if [ -f "$DOCA_KUBECONFIG" ]; then
   DPU_NODE=$(KUBECONFIG=$DOCA_KUBECONFIG oc get nodes -o jsonpath='{.items[0].metadata.name}')
   KUBECONFIG=$DOCA_KUBECONFIG oc debug node/$DPU_NODE -- chroot /host bash -c '
@@ -74,7 +91,7 @@ else
 fi
 pause
 
-echo "--- 9. Host does NOT see the VF traffic (isolation) ---"
+echo "--- 11. Host does NOT see the VF traffic (isolation) ---"
 oc debug node/$NODE -- chroot /host bash -c "
   echo 'VF $VF_PCI driver on host:'
   basename \$(readlink /sys/bus/pci/devices/$VF_PCI/driver)
