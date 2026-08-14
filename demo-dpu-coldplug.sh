@@ -65,10 +65,11 @@ if [ -f "$DOCA_KUBECONFIG" ]; then
   DPU_OVN=$(KUBECONFIG=$DOCA_KUBECONFIG oc get pods -n dpf-operator-system -o name 2>/dev/null | grep ovn | head -1)
   if [ -n "$DPU_OVN" ]; then
     OVN_POD=${DPU_OVN#pod/}
-    echo -e "\033[1;32m\$ KUBECONFIG=\$DOCA_KUBECONFIG oc exec \$DPU_OVN -c ovn-controller -- ovs-vsctl list interface pf1vf*\033[0m"
-    KUBECONFIG=$DOCA_KUBECONFIG timeout 15 oc exec -n dpf-operator-system $OVN_POD -c ovn-controller -- bash -c '
-      ovs-vsctl list interface pf1vf* 2>/dev/null | grep -E "name|external_ids|link_state|statistics" | head -4
-    ' 2>/dev/null
+    DPU_VF=$(oc get pod kata-dpu-test -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/dpu\.connection-details}' 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin)['default']; print(f\"pf{d['pfId']}vf{d['vfId']}\")" 2>/dev/null)
+    echo -e "\033[1;32m\$ KUBECONFIG=\$DOCA_KUBECONFIG oc exec \$DPU_OVN -c ovn-controller -- ovs-vsctl list interface $DPU_VF\033[0m"
+    KUBECONFIG=$DOCA_KUBECONFIG timeout 15 oc exec -n dpf-operator-system $OVN_POD -c ovn-controller -- bash -c "
+      ovs-vsctl list interface $DPU_VF 2>/dev/null | grep -E 'name|external_ids|link_state'
+    " 2>/dev/null
   fi
 else
   echo "  (DOCA kubeconfig not set, skipping)"
