@@ -20,10 +20,11 @@ a 100 GbE network interface with L2 connectivity to the OVN gateway.
 - SR-IOV VF pool for kata (e.g. `openshift.io/bf3-p1-vfs-kata`)
 - IOMMU enabled on DPU host nodes (`intel_iommu=on iommu=pt`)
 
-## Quick start (test cluster)
+## Quick start (test cluster, multiple nodes)
 
-For testing without a z-stream OCP release, this repo provides an
-RHCOS layered image with the patched kata RPM pre-installed.
+For testing without a z-stream OCP release. Uses an RHCOS layered
+image that the MCO rolls out to all nodes in the MachineConfigPool
+automatically.
 
 ### Step 1: Deploy RHCOS layer + OSC operator
 
@@ -104,10 +105,10 @@ exit
 agg demo-dpu-coldplug.cast demo-dpu-coldplug.gif
 ```
 
-## Alternative: install RPM without RHCOS layer
+## Alternative: install RPM directly (1-2 test nodes)
 
-If the OSC operator is already installed (kata RPM on the nodes),
-you can replace it directly with the patched RPM:
+For quick testing on a small number of nodes where OSC is already
+installed. Must be repeated on each node individually.
 
 ```bash
 # Download RPM from Brew (requires RH VPN)
