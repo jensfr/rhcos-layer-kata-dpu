@@ -119,14 +119,69 @@ The Containerfile uses a multi-stage build:
 | `kata-coldplug-machineconfig.yaml` | Standalone MachineConfig for kata-coldplug (alternative to 04) |
 | `kata-coldplug-runtimeclass.yaml` | Standalone RuntimeClass (included in 04) |
 
+## DPU networking workaround (after host reboot)
+
+After a host reboot the DPU loses the IPv4 address on `br-dpu`,
+breaking all pod networking. This is a known DPF bug (documented in
+DPF v24.10.0 release notes). Recovery steps:
+
+```bash
+# Get the DOCA admin kubeconfig
+oc get secret doca-admin-kubeconfig -n dpf-operator-system \
+  -o jsonpath='{.data.super-admin\.conf}' | base64 -d > /tmp/doca-kubeconfig.yaml
+
+# Find the DPU node name
+DPU_NODE=$(KUBECONFIG=/tmp/doca-kubeconfig.yaml oc get nodes -o jsonpath='{.items[0].metadata.name}')
+
+# 1. Restart OVS on DPU (fixes DPDK attach errors after host reboot)
+KUBECONFIG=/tmp/doca-kubeconfig.yaml oc debug node/$DPU_NODE -- \
+  chroot /host systemctl restart openvswitch
+
+# 2. Add host management IP to br-dpu (use /32 to avoid route conflicts)
+HOST_IP=$(oc get node <host-node> -o jsonpath='{.status.addresses[0].address}')
+KUBECONFIG=/tmp/doca-kubeconfig.yaml oc debug node/$DPU_NODE -- \
+  chroot /host ip addr add $HOST_IP/32 dev br-dpu
+
+# 3. Restart OVN pod on DPU cluster
+KUBECONFIG=/tmp/doca-kubeconfig.yaml oc delete pod -n dpf-operator-system <doca-ovn-pod>
+
+# 4. Restart OVN pod on host cluster
+oc delete pod -n openshift-ovn-kubernetes <ovnkube-node-dpu-host-pod>
+```
+
+Wait 2-3 minutes after step 4, then pods should start normally.
+
+Root cause: OVN-K masquerade reconciler needs a non-link-local IPv4 on br-dpu.
+The code filters out 169.254.x.x addresses (`IsLinkLocalUnicast`), so the host
+management IP (e.g. 10.26.16.30) must be used. Use /32 to avoid routing conflicts
+with the DPU management bridge (br-comm-ch on the same /24 subnet).
+
 ## Brew scratch build
 
-The patched RPM was built as Brew scratch build task 71190778
+Latest RPM: Brew scratch build task 71569544 (kata-containers-3.31.0-5)
 (target: rhaos-4.23-rhel-9-candidate, required for Go 1.25.10).
+
+Previous RPM: task 71190778 (kata-containers-3.31.0-3, without DPU config files).
+
+## What the RPM ships (3.31.0-5+)
+
+The z-stream RPM includes everything needed for DPU support:
+
+- 8 patches from upstream PR #13103 (cold-plug VFIO, VF admin MAC, IB support)
+- `/etc/crio/crio.conf.d/50-kata-coldplug` (CRI-O runtime handler)
+- `/etc/kata-containers/config.d/50-kata-coldplug.toml` (cold_plug_vfio=root-port, pcie_root_port=2, vfio_mode=guest-kernel)
+- mlx5/InfiniBand kernel modules in the kata guest initrd dracut config
+
+Customer prerequisites (documented, not shipped):
+- IOMMU enabled (`intel_iommu=on iommu=pt` via MachineConfig or BIOS)
+- RuntimeClass `kata-coldplug` created (`oc apply -f kata-coldplug-runtimeclass.yaml`)
+- NVIDIA DPF configured (OVN-K webhook with runtimeClassMappings, VF pool, NAD)
+
+No OSC operator upgrade required. RPM comes via OCP z-stream.
 
 ## Upstream PR
 
 https://github.com/kata-containers/kata-containers/pull/13103
 
-17 commits by Fabiano Fidencio (ffidencio@nvidia.com) fixing cold-plug VFIO
-guest-kernel mode for SR-IOV RoCE/InfiniBand with BlueField DPU + OVN-Kubernetes.
+8 cherry-picked commits by Fabiano Fidencio (ffidencio@nvidia.com) for cold-plug VFIO
+guest-kernel mode with BlueField DPU and OVN-Kubernetes.
