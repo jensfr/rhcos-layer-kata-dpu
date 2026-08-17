@@ -28,3 +28,6 @@ overhead:
   podFixed:
     memory: "350Mi"
     cpu: "250m"
+scheduling:
+  nodeSelector:
+    node-role.kubernetes.io/kata-oc: ""
