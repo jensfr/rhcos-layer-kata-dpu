@@ -230,7 +230,7 @@ done'
 
 ## Brew scratch build
 
-Latest RPM: task 71569544 (kata-containers-3.31.0-5, target rhaos-4.23-rhel-9-candidate).
+Latest RPM: task [71706048](https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=71706048) (kata-containers-3.31.0-5, target rhaos-4.23-rhel-9-candidate, built 2026-09-01).
 
 RPM spec branch: `dpu-coldplug-zstream` on gitlab.com/jfreiman/kata-containers
 
