@@ -20,7 +20,18 @@ a 100 GbE network interface with L2 connectivity to the OVN gateway.
 - SR-IOV VF pool for kata (e.g. `openshift.io/bf3-p1-vfs-kata`)
 - IOMMU enabled on DPU host nodes (`intel_iommu=on iommu=pt`)
 
-## Quick start (test cluster, multiple nodes)
+## Deployment options
+
+| Method | When to use | Guide |
+|--------|-------------|-------|
+| **RPM only** | 1-2 test nodes, or z-stream production | [DEPLOY-RPM-ONLY.md](DEPLOY-RPM-ONLY.md) |
+| **RHCOS layer** | Multiple test nodes without z-stream | See below |
+
+For most cases, the **RPM-only** path is recommended. The RHCOS layer
+is only needed if you cannot install the RPM via `rpm-ostree override replace`
+(e.g. no VPN access to download the RPM).
+
+## Quick start: RHCOS layer (test cluster, multiple nodes)
 
 For testing without a z-stream OCP release. Uses an RHCOS layered
 image that the MCO rolls out to all nodes in the MachineConfigPool
