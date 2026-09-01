@@ -232,6 +232,8 @@ done'
 
 Latest RPM: task [71706048](https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=71706048) (kata-containers-3.31.0-5, target rhaos-4.23-rhel-9-candidate, built 2026-09-01).
 
+RPM download (requires RH VPN): [kata-containers-3.31.0-5.rhaos4.22.el9.x86_64.rpm](https://download.devel.redhat.com/brewroot/work/tasks/6204/71706204/kata-containers-3.31.0-5.rhaos4.22.el9.x86_64.rpm)
+
 RPM spec branch: `dpu-coldplug-zstream` on gitlab.com/jfreiman/kata-containers
 
 ## Upstream
