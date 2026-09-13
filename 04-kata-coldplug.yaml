@@ -2,7 +2,7 @@ apiVersion: machineconfiguration.openshift.io/v1
 kind: MachineConfig
 metadata:
   labels:
-    machineconfiguration.openshift.io/role: kata-oc
+    machineconfiguration.openshift.io/role: worker-dpu
   name: 50-kata-coldplug-config
 spec:
   config:
