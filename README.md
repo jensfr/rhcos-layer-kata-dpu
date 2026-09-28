@@ -1,15 +1,148 @@
-# Kata DPU Cold-Plug VFIO via RHCOS Layer
+# HOWTO: Install Kata 4.1 with DPU Cold-Plug VFIO via RHCOS Layer
 
-Install Kata Containers 4.1.0 with DPU/SR-IOV cold-plug VFIO support
-on OpenShift 4.22 using an RHCOS layered image. No OSC operator
-installation required.
+Layer-only installation of Kata Containers 4.1.0-3 with SR-IOV cold-plug
+VFIO support for BlueField-3 DPU on OpenShift 4.22. No OSC operator
+installation needed.
+
+The image contains Kata, the coldplug configuration, guest initrd
+generation and mlx5 modules. You do not need to build anything.
+
+Installation on a fresh cluster, pod lifecycle and an additional reboot
+have been tested. Actual DPU passthrough and networking still need
+validation on DPU hardware.
+
+## 1. Check the starting state
+
+You need an OpenShift 4.22 x86_64 test cluster, cluster-admin access,
+and `git`, `bash`, `python3` and `oc` locally.
+
+```bash
+oc whoami --show-server
+oc get clusterversion version
+oc get mcp worker-dpu
+oc get nodes -l node-role.kubernetes.io/worker-dpu -o wide
+```
+
+The commands below assume that the `worker-dpu` pool selects
+MachineConfigs labelled `machineconfiguration.openshift.io/role: worker-dpu`,
+and its nodes carry `node-role.kubernetes.io/worker-dpu`.
+
+**No OSC installer may manage these nodes in parallel.** If your previous
+OSC/KataConfig installation is still active or stuck, resolve it before
+applying the layer:
+
+```bash
+oc get kataconfig
+oc get ds,pods -n openshift-sandboxed-containers-operator -o wide
+```
+
+Simply deleting installer pods is insufficient because the operator
+recreates them. Deleting KataConfig starts an uninstall, so complete
+any previous cleanup before installing this layer.
+
+Keep the existing ClusterImagePolicy enabled.
+
+## 2. Check out the reviewed version
+
+```bash
+git clone --branch layer-only \
+  https://github.com/jensfr/rhcos-layer-kata-dpu.git \
+  rhcos-layer-kata-dpu-layer-only
+
+cd rhcos-layer-kata-dpu-layer-only
+
+git checkout --detach 4119781
+```
+
+If `99-kata-dpu-layered` already exists from an earlier attempt, save its
+current definition before replacing it:
+
+```bash
+oc get mc 99-kata-dpu-layered -o yaml > previous-kata-layer.yaml
+```
+
+Skip that backup command if the MachineConfig does not exist.
+
+## 3. Install on worker-dpu
+
+```bash
+bash ./deploy.sh worker-dpu
+```
+
+**This rolls out an OS image and reboots the target nodes.** Plan for
+workload disruption on that pool.
+
+The script applies the pinned image, waits for the correct
+image/configuration to finish rolling out, creates `kata-coldplug` with
+node scheduling, and checks each target node.
+
+You can monitor progress in another terminal:
+
+```bash
+oc get mcp worker-dpu -w
+```
+
+Completion should show `UPDATED=True`, `UPDATING=False`, and
+`DEGRADED=False`.
+
+For SNO testing without a `worker-dpu` pool:
+
+```bash
+bash ./deploy.sh master
+```
+
+## 4. Run the smoke test
+
+Use a dedicated test project. Run this before starting other Kata
+workloads, because the cleanup check assumes no other Kata VMs on the
+test node.
+
+```bash
+oc new-project kata-dpu-smoke
+bash ./test.sh worker-dpu
+```
+
+If the project already exists, select it with `oc project kata-dpu-smoke`.
+
+The test checks the installed files and version, starts a `kata-coldplug`
+pod, executes a command inside it, deletes it, and checks QEMU/Shim
+cleanup. Expect a final summary with zero failures.
+
+## 5. Test the DPU workload
+
+After the smoke test passes:
+
+- Confirm IOMMU is active on the DPU host.
+- Configure your OVN-K webhook/NAD mapping for `kata-coldplug`.
+- Use `runtimeClassName: kata-coldplug` in your DPU workload.
+- Use your actual NAD and VF resource name.
+- Verify the device and mlx5 driver inside the guest, network
+  connectivity, and cleanup after pod deletion.
+
+The repository's `05-test-pod.yaml` does **not** request a DPU device;
+it only checks the Kata runtime.
+
+## Removal
+
+First stop the test workloads. Then remove the MachineConfig and
+RuntimeClass:
+
+```bash
+oc delete runtimeclass kata-coldplug
+oc delete mc 99-kata-dpu-layered
+oc get mcp worker-dpu -w
+```
+
+This causes another OS rollout/reboot. If you replaced an existing layer
+MachineConfig, restore its saved definition instead of deleting it.
 
 ## What the layer provides
 
 The RHCOS layer image contains kata-containers 4.1.0-3 with:
 
 - Upstream PR #13103 (cold-plug VFIO, included natively in 4.1.0)
-- Revert of upstream commit d3291b87 (TaskExit ordering, temporary)
+- Revert of upstream commit d3291b87 (TaskExit ordering, temporary
+  until upstream fix lands)
 - CRI-O handler `50-kata-coldplug`
 - config.d drop-in `50-kata-coldplug.toml` (cold_plug_vfio=root-port,
   pcie_root_port=2, vfio_mode=guest-kernel)
@@ -19,77 +152,8 @@ The RHCOS layer image contains kata-containers 4.1.0-3 with:
 - SELinux policy (osc_monitor module, from RPM postinstall)
 
 No additional MachineConfig for CRI-O or kata configuration is needed.
-The RPM ships all config files.
-
-## Prerequisites
-
-- OpenShift 4.22 cluster
-- A MachineConfigPool targeting the desired nodes (e.g. `worker-dpu`)
-- `oc` CLI authenticated to the cluster
-
-For DPU clusters:
-- NVIDIA DPF deployed with OVN-K webhook
-- IOMMU enabled on DPU host nodes (BIOS or MachineConfig)
-
-## Installation
-
-```bash
-./deploy.sh worker-dpu
-```
-
-For SNO testing:
-```bash
-./deploy.sh master
-```
-
-The script applies the RHCOS layer, waits for the MCP rollout (nodes
-reboot), creates the RuntimeClass, and verifies the installation on
-all target nodes.
-
-### What deploy.sh does
-
-1. Validates the target MCP exists and has nodes
-2. Applies the RHCOS layer MachineConfig (nodes reboot)
-3. Waits until the MCP has fully applied the rendered config containing
-   the expected layer digest
-4. Creates the `kata-coldplug` RuntimeClass with scheduling on the
-   target nodes
-5. Verifies on every target node: RPM version, initrd, kernel symlinks,
-   CRI-O handler, config.d, vfio-pci module config, mlx5 in initrd
-
-### Manual steps
-
-```bash
-# 1. Apply layer (adjust role to your MCP)
-oc apply -f 03-rhcos-layer.yaml
-# Wait for node reboot and MCP completion
-
-# 2. Create RuntimeClass (adjust nodeSelector)
-oc apply -f kata-coldplug-runtimeclass.yaml
-
-# 3. Test
-oc apply -f 05-test-pod.yaml
-oc wait --for=condition=Ready pod/kata-coldplug-test --timeout=120s
-oc exec kata-coldplug-test -- cat /proc/version
-```
-
-## Removing the layer
-
-```bash
-oc delete mc 99-kata-dpu-layered
-oc delete runtimeclass kata-coldplug
-# Wait for MCP rollout (nodes reboot to stock RHCOS)
-```
-
-## How it works without the OSC operator
-
-The kata RPM includes a systemd service (`kata-osbuilder-generate.service`)
-with a systemd preset that enables it at install time. On first boot after
-the layer is applied, this service builds the guest initrd from the host
-kernel using the dracut config shipped in the RPM. The SELinux policy module
-(`osc_monitor`) is installed by the RPM's postinstall scriptlet.
-
-No DS installer, no KataConfig CR, and no operator are involved.
+The RPM ships all config files. The osbuilder service builds the guest
+initrd at boot. This installation is independent of the OSC operator.
 
 ## RHCOS layer image
 
@@ -99,7 +163,7 @@ No DS installer, no KataConfig CR, and no operator are involved.
 - RPM branch: `dpu-4.1.0-rhel9` on gitlab.com/jfreiman/kata-containers
 - Base: RHCOS 4.22 + OCP extensions (qemu-kvm-core, virtiofsd)
 
-### Rebuilding
+## Rebuilding the layer
 
 ```bash
 podman build --platform linux/amd64 \
@@ -110,24 +174,12 @@ podman push quay.io/jensfr/rhcos-kata-dpu:4.22-v6-kata410
 # Update digest in 03-rhcos-layer.yaml
 ```
 
-## For DPU testing (Igal)
-
-The layer targets `worker-dpu` by default in the manifests. Igal's
-existing `worker-dpu` MCP is used directly. No `kata-oc` MCP conflict.
-
-After layer installation, configure the NVIDIA OVN-K webhook:
-```
---runtime-class-nad-mapping=kata-coldplug=<kata-nad-name>
-```
-
-VFIO passthrough and DPU network connectivity require DPU hardware
-and are not covered by the layer-only test.
-
 ## Test results
 
 ### Fresh cluster (no prior kata installation)
 - Cluster-Bot OCP 4.22 nightly, 3 worker nodes, no OSC operator
 - Layer applied via MCP `worker`, all 3 nodes updated
+- deploy.sh and test.sh: 36/36 checks passed, 0 failures
 - kata 4.1.0-3 active, initrd built with mlx5 modules
 - CRI-O handler, config.d, vfio-pci module-load, SELinux all from RPM
 - kata-coldplug pod: start, exec, delete, QEMU/Shim cleanup confirmed
@@ -139,7 +191,7 @@ and are not covered by the layer-only test.
 - Pod lifecycle confirmed after additional reboot
 
 ### Open
-- VFIO passthrough with DPU hardware (requires Igal's cluster)
+- VFIO passthrough with DPU hardware (requires DPU cluster)
 - DPU br-dpu recovery after host reboot (known DPF bug)
 - L3 connectivity through DPU OVN pipeline
 
@@ -152,3 +204,4 @@ and are not covered by the layer-only test.
 | `kata-coldplug-runtimeclass.yaml` | RuntimeClass (adjust nodeSelector) |
 | `05-test-pod.yaml` | Test pod (no DPU device request) |
 | `deploy.sh` | Automated deploy + verify |
+| `test.sh` | Automated test suite |
