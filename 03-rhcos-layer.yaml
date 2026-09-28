@@ -1,8 +1,10 @@
+# RHCOS layer with kata-containers 4.1.0-3 (DPU cold-plug VFIO support).
+# Change the role label to match your target MCP (e.g. worker-dpu, master).
 apiVersion: machineconfiguration.openshift.io/v1
 kind: MachineConfig
 metadata:
   labels:
-    machineconfiguration.openshift.io/role: kata-oc
+    machineconfiguration.openshift.io/role: worker-dpu
   name: 99-kata-dpu-layered
 spec:
-  osImageURL: quay.io/jensfr/rhcos-kata-dpu@sha256:ce05dea3e0214c7bf7864cef1110e414a6419430fe2f55b5e9c848b71b799a8f
+  osImageURL: quay.io/jensfr/rhcos-kata-dpu@sha256:83140f34a7a25d77f0d98bbcc512dddf7dfbe9961f7e05ee9c896519d1736719

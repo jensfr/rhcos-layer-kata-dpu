@@ -1,3 +1,5 @@
+# Test pod for kata-coldplug. No DPU device request.
+# For DPU testing, add resources.limits with the VF resource name.
 apiVersion: v1
 kind: Pod
 metadata:

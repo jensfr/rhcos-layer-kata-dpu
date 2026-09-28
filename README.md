@@ -1,132 +1,154 @@
-# DPU/SR-IOV Cold-Plug VFIO Backport for OSC
+# Kata DPU Cold-Plug VFIO via RHCOS Layer
 
-RHCOS layered image and deployment manifests for testing the DPU/SR-IOV
-cold-plug VFIO backport (upstream PR #13103) on OpenShift Sandboxed Containers.
+Install Kata Containers 4.1.0 with DPU/SR-IOV cold-plug VFIO support
+on OpenShift 4.22 using an RHCOS layered image. No OSC operator
+installation required.
 
-![Demo](demo.gif)
+## What the layer provides
 
-## What's included
+The RHCOS layer image contains kata-containers 4.1.0-3 with:
 
-- **Patched kata-containers RPM** (3.31.0-3): 17 commits from upstream PR #13103
-  backported onto the OCP 4.22 kata-containers base. Fixes end-to-end cold-plug
-  VFIO with `vfio_mode = "guest-kernel"` for SR-IOV RoCE/InfiniBand (BlueField DPU).
+- Upstream PR #13103 (cold-plug VFIO, included natively in 4.1.0)
+- Revert of upstream commit d3291b87 (TaskExit ordering, temporary)
+- CRI-O handler `50-kata-coldplug`
+- config.d drop-in `50-kata-coldplug.toml` (cold_plug_vfio=root-port,
+  pcie_root_port=2, vfio_mode=guest-kernel)
+- `/etc/modules-load.d/kata-vfio.conf` (boot-time vfio-pci loading)
+- mlx5/InfiniBand modules in the dracut config (built into the guest
+  initrd at boot by `kata-osbuilder-generate.service`)
+- SELinux policy (osc_monitor module, from RPM postinstall)
 
-- **RHCOS layered image**: Base RHCOS 4.22 + qemu-kvm-core + virtiofsd +
-  patched kata RPM + mlx5/InfiniBand kernel modules in the kata guest initrd.
-
-- **`kata-coldplug` RuntimeClass**: Device-neutral cold-plug VFIO runtime class.
-  Uses the base kata configuration with `cold_plug_vfio = "root-port"` via config.d drop-in.
+No additional MachineConfig for CRI-O or kata configuration is needed.
+The RPM ships all config files.
 
 ## Prerequisites
 
-- OpenShift 4.22 cluster with nested virtualization support (for testing without DPU hardware)
-  - Azure: Dv3/Dv4/Dv5/Ev5 series (NOT B-series)
-  - AWS: metal instances or i3/m5/c5 with nested virt
-  - Bare metal: works out of the box
+- OpenShift 4.22 cluster
+- A MachineConfigPool targeting the desired nodes (e.g. `worker-dpu`)
 - `oc` CLI authenticated to the cluster
 
-## Quick deploy
+For DPU clusters:
+- NVIDIA DPF deployed with OVN-K webhook
+- IOMMU enabled on DPU host nodes (BIOS or MachineConfig)
+
+## Installation
 
 ```bash
-./deploy.sh
+./deploy.sh worker-dpu
 ```
 
-Or step by step:
+For SNO testing:
+```bash
+./deploy.sh master
+```
+
+The script applies the RHCOS layer, waits for the MCP rollout (nodes
+reboot), creates the RuntimeClass, and verifies the installation on
+all target nodes.
+
+### What deploy.sh does
+
+1. Validates the target MCP exists and has nodes
+2. Applies the RHCOS layer MachineConfig (nodes reboot)
+3. Waits until the MCP has fully applied the rendered config containing
+   the expected layer digest
+4. Creates the `kata-coldplug` RuntimeClass with scheduling on the
+   target nodes
+5. Verifies on every target node: RPM version, initrd, kernel symlinks,
+   CRI-O handler, config.d, vfio-pci module config, mlx5 in initrd
+
+### Manual steps
 
 ```bash
-# 1. Install OSC operator
-oc apply -f 01-osc-operator.yaml
-# Wait for CSV to succeed
-
-# 2. Create KataConfig (standard kata, no peer pods)
-oc apply -f 02-kataconfig.yaml
-# Wait for kata install on all nodes (10-30 min, involves node reboots)
-
-# 3. Apply RHCOS layered image with DPU patches
+# 1. Apply layer (adjust role to your MCP)
 oc apply -f 03-rhcos-layer.yaml
-# Wait for MCP rollout (10-15 min per node)
+# Wait for node reboot and MCP completion
 
-# 4. Apply kata-coldplug CRI-O config + RuntimeClass
-oc apply -f 04-kata-coldplug.yaml
+# 2. Create RuntimeClass (adjust nodeSelector)
+oc apply -f kata-coldplug-runtimeclass.yaml
 
-# 5. Test
+# 3. Test
 oc apply -f 05-test-pod.yaml
-oc wait --for=condition=Ready pod/kata-coldplug-test --timeout=180s
-oc exec kata-coldplug-test -- cat /proc/modules | grep -i "mlx5\|ib_"
+oc wait --for=condition=Ready pod/kata-coldplug-test --timeout=120s
+oc exec kata-coldplug-test -- cat /proc/version
 ```
 
-## Verification
-
-After deployment, verify on a kata-oc node:
+## Removing the layer
 
 ```bash
-NODE=$(oc get nodes -l node-role.kubernetes.io/kata-oc -o jsonpath='{.items[0].metadata.name}')
-oc debug node/$NODE -- chroot /host bash -c "
-  rpm -q kata-containers                        # should be 3.31.0-3
-  cat /etc/crio/crio.conf.d/50-kata-coldplug    # CRI-O handler
-  cat /etc/kata-containers/config.d/50-coldplug.toml  # cold_plug_vfio
-  lsinitrd /var/cache/kata-containers/osbuilder-images/kata.initrd | grep mlx5
-"
+oc delete mc 99-kata-dpu-layered
+oc delete runtimeclass kata-coldplug
+# Wait for MCP rollout (nodes reboot to stock RHCOS)
 ```
 
-Inside a kata-coldplug pod, the mlx5/IB modules should be loaded:
+## How it works without the OSC operator
 
-```
-mlx5_core    3100672  1 mlx5_ib
-mlx5_ib       557056  0
-ib_core       577536  3 ib_umad,mlx5_ib,ib_uverbs
-ib_uverbs     221184  1 mlx5_ib
-ib_umad        49152  0
-mlxfw          49152  1 mlx5_core
-```
+The kata RPM includes a systemd service (`kata-osbuilder-generate.service`)
+with a systemd preset that enables it at install time. On first boot after
+the layer is applied, this service builds the guest initrd from the host
+kernel using the dracut config shipped in the RPM. The SELinux policy module
+(`osc_monitor`) is installed by the RPM's postinstall scriptlet.
 
-## Rebuilding the RHCOS layer image
+No DS installer, no KataConfig CR, and no operator are involved.
 
-To modify the image (different base, different patches, different OCP version):
+## RHCOS layer image
+
+- Image: `quay.io/jensfr/rhcos-kata-dpu:4.22-v6-kata410`
+- Digest: `sha256:83140f34a7a25d77f0d98bbcc512dddf7dfbe9961f7e05ee9c896519d1736719`
+- RPM: `kata-containers-4.1.0-3.rhaos4.22.el9` (Brew task 71976541)
+- RPM branch: `dpu-4.1.0-rhel9` on gitlab.com/jfreiman/kata-containers
+- Base: RHCOS 4.22 + OCP extensions (qemu-kvm-core, virtiofsd)
+
+### Rebuilding
 
 ```bash
-# Edit Containerfile as needed, then:
-podman build --authfile ~/Downloads/pull-secret.txt \
-  --platform linux/amd64 \
-  -t quay.io/jensfr/rhcos-kata-dpu:4.22-v3 \
+podman build --platform linux/amd64 \
+  --authfile ~/Downloads/pull-secret.txt \
+  -t quay.io/jensfr/rhcos-kata-dpu:4.22-v6-kata410 \
   -f Containerfile .
-
-podman push quay.io/jensfr/rhcos-kata-dpu:4.22-v3
-
-# Get the new digest
-skopeo inspect docker://quay.io/jensfr/rhcos-kata-dpu:4.22-v3 --no-creds | grep Digest
-
-# Update 03-rhcos-layer.yaml with the new digest
+podman push quay.io/jensfr/rhcos-kata-dpu:4.22-v6-kata410
+# Update digest in 03-rhcos-layer.yaml
 ```
 
-The Containerfile uses a multi-stage build:
-1. Stage 1 (`extensions`): RHCOS extensions image with qemu/virtiofsd RPMs
-2. Stage 2 (`repo`): Fedora with createrepo_c to build a local RPM repo
-3. Stage 3: RHCOS base + rpm-ostree install from the local repo + dracut config
+## For DPU testing (Igal)
+
+The layer targets `worker-dpu` by default in the manifests. Igal's
+existing `worker-dpu` MCP is used directly. No `kata-oc` MCP conflict.
+
+After layer installation, configure the NVIDIA OVN-K webhook:
+```
+--runtime-class-nad-mapping=kata-coldplug=<kata-nad-name>
+```
+
+VFIO passthrough and DPU network connectivity require DPU hardware
+and are not covered by the layer-only test.
+
+## Test results
+
+### Fresh cluster (no prior kata installation)
+- Cluster-Bot OCP 4.22 nightly, 3 worker nodes, no OSC operator
+- Layer applied via MCP `worker`, all 3 nodes updated
+- kata 4.1.0-3 active, initrd built with mlx5 modules
+- CRI-O handler, config.d, vfio-pci module-load, SELinux all from RPM
+- kata-coldplug pod: start, exec, delete, QEMU/Shim cleanup confirmed
+
+### Existing cluster (SNO, prior DS installation removed)
+- virtlab2400 OCP 4.22.13 GA, SNO
+- Layer on top of prior DS installation (cleaned up)
+- kata 4.1.0-3 active after reboot
+- Pod lifecycle confirmed after additional reboot
+
+### Open
+- VFIO passthrough with DPU hardware (requires Igal's cluster)
+- DPU br-dpu recovery after host reboot (known DPF bug)
+- L3 connectivity through DPU OVN pipeline
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `Containerfile` | Multi-stage build for the RHCOS layered image |
-| `01-osc-operator.yaml` | Namespace, OperatorGroup, Subscription for OSC |
-| `02-kataconfig.yaml` | KataConfig CR (standard kata, no peer pods) |
-| `03-rhcos-layer.yaml` | MachineConfig with osImageURL pointing to the layered image |
-| `04-kata-coldplug.yaml` | CRI-O drop-in + kata config.d drop-in + RuntimeClass |
-| `05-test-pod.yaml` | Test pod using kata-coldplug RuntimeClass |
-| `deploy.sh` | Automated deployment script |
-| `50-kata-coldplug` | CRI-O drop-in source file (baked into 04-kata-coldplug.yaml) |
-| `kata-coldplug-machineconfig.yaml` | Standalone MachineConfig for kata-coldplug (alternative to 04) |
-| `kata-coldplug-runtimeclass.yaml` | Standalone RuntimeClass (included in 04) |
-
-## Brew scratch build
-
-The patched RPM was built as Brew scratch build task 71190778
-(target: rhaos-4.23-rhel-9-candidate, required for Go 1.25.10).
-
-## Upstream PR
-
-https://github.com/kata-containers/kata-containers/pull/13103
-
-17 commits by Fabiano Fidencio (ffidencio@nvidia.com) fixing cold-plug VFIO
-guest-kernel mode for SR-IOV RoCE/InfiniBand with BlueField DPU + OVN-Kubernetes.
+| `Containerfile` | RHCOS layer build (4.1.0-3 + extensions) |
+| `03-rhcos-layer.yaml` | MachineConfig with osImageURL |
+| `kata-coldplug-runtimeclass.yaml` | RuntimeClass (adjust nodeSelector) |
+| `05-test-pod.yaml` | Test pod (no DPU device request) |
+| `deploy.sh` | Automated deploy + verify |
