@@ -75,7 +75,11 @@ wait_mcp() {
     local digest_confirmed=false
     if [ -n "$spec_config" ] && [ -n "$expected_digest" ]; then
       local rendered_url
-      rendered_url=$(oc get mc "$spec_config" -o jsonpath='{.spec.osImageURL}' --request-timeout=10s 2>/dev/null)
+      if ! rendered_url=$(oc get mc "$spec_config" -o jsonpath='{.spec.osImageURL}' --request-timeout=10s 2>/dev/null); then
+        echo "  Cannot read rendered MC, retrying..."
+        sleep 15
+        continue
+      fi
       if [ -z "$rendered_url" ]; then
         echo "  Cannot read rendered MC osImageURL, retrying..."
         sleep 15

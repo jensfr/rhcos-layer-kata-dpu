@@ -69,7 +69,14 @@ oc apply -f "$(dirname "$0")/05-test-pod.yaml" &>/dev/null
 
 if oc wait --for=condition=Ready pod/kata-coldplug-test --timeout=120s &>/dev/null; then
   POD_NODE=$(oc get pod kata-coldplug-test -o jsonpath='{.spec.nodeName}')
-  check "pod scheduled on target node" "$POD_NODE" "$(echo $NODES | tr ' ' '\n' | head -1)\|$(echo $NODES | tr ' ' '|')"
+  target_node=false
+  for candidate in $NODES; do
+    if [[ "$POD_NODE" == "$candidate" ]]; then
+      target_node=true
+      break
+    fi
+  done
+  check "pod scheduled on target node" "$target_node" "^true$"
 
   exec_out=$(oc exec kata-coldplug-test -- cat /proc/version 2>/dev/null)
   check "exec works" "$exec_out" "Linux version"
