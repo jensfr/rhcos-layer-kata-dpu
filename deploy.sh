@@ -70,22 +70,30 @@ wait_mcp() {
       err "MCP '$MCP_ROLE' is degraded."
     fi
 
-    # Check rendered config includes our layer digest.
-    if [ -n "$spec_config" ]; then
+    # Verify rendered config includes our layer digest.
+    # Both the digest check and the MCP completion check must pass together.
+    local digest_confirmed=false
+    if [ -n "$spec_config" ] && [ -n "$expected_digest" ]; then
       local rendered_url
-      rendered_url=$(oc get mc "$spec_config" -o jsonpath='{.spec.osImageURL}' --request-timeout=10s 2>/dev/null || true)
-      if [ -n "$expected_digest" ] && [ -n "$rendered_url" ]; then
-        if ! echo "$rendered_url" | grep -q "$expected_digest"; then
-          echo "  Rendered config does not yet include expected digest, waiting..."
-          sleep 15
-          continue
-        fi
+      rendered_url=$(oc get mc "$spec_config" -o jsonpath='{.spec.osImageURL}' --request-timeout=10s 2>/dev/null)
+      if [ -z "$rendered_url" ]; then
+        echo "  Cannot read rendered MC osImageURL, retrying..."
+        sleep 15
+        continue
+      fi
+      if echo "$rendered_url" | grep -q "$expected_digest"; then
+        digest_confirmed=true
+      else
+        echo "  Rendered config does not include expected digest, waiting..."
+        sleep 15
+        continue
       fi
     fi
 
-    # Desired state: spec and status configs match, Updated=True,
-    # Updating=False, all nodes ready.
-    if [ "$spec_config" = "$status_config" ] && [ -n "$spec_config" ] \
+    # Desired state: digest confirmed in rendered config, spec and status
+    # configs match, Updated=True, Updating=False, all nodes ready.
+    if [ "$digest_confirmed" = true ] \
+       && [ "$spec_config" = "$status_config" ] && [ -n "$spec_config" ] \
        && [ "$cond_updated" = "True" ] && [ "$cond_updating" = "False" ] \
        && [ "$ready" = "$total" ] && [ "$total" != "0" ]; then
       return

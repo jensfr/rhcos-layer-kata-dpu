@@ -21,7 +21,7 @@ COPY --from=extensions /usr/share/rpm-ostree/extensions/daxctl-libs-*.rpm /tmp/r
 COPY --from=extensions /usr/share/rpm-ostree/extensions/pixman-*.rpm /tmp/rpms/
 COPY --from=extensions /usr/share/rpm-ostree/extensions/protobuf-*.rpm /tmp/rpms/
 COPY --from=extensions /usr/share/rpm-ostree/extensions/librdmacm-*.rpm /tmp/rpms/
-COPY kata-containers-3.31.0-3.rhaos4.22.el9.x86_64.rpm /tmp/rpms/
+COPY kata-containers-4.1.0-3.rhaos4.22.el9.x86_64.rpm /tmp/rpms/
 RUN createrepo_c /tmp/rpms
 
 # Final RHCOS image
@@ -32,25 +32,18 @@ COPY --from=repo /tmp/rpms /tmp/rpms
 RUN echo -e '[kata-local]\nname=kata-local\nbaseurl=file:///tmp/rpms\nenabled=1\ngpgcheck=0' \
       > /etc/yum.repos.d/kata-local.repo && \
     rpm-ostree install \
-      kata-containers-3.31.0-3.rhaos4.22.el9 \
+      kata-containers-4.1.0-3.rhaos4.22.el9 \
       qemu-kvm-core \
       virtiofsd && \
     rpm-ostree cleanup -m && \
     rm -rf /tmp/rpms /etc/yum.repos.d/kata-local.repo
 
-# CRI-O drop-in for kata-coldplug runtime handler
-COPY 50-kata-coldplug /etc/crio/crio.conf.d/50-kata-coldplug
+# The RPM ships: CRI-O handler (50-kata-coldplug), config.d drop-in
+# (50-kata-coldplug.toml), vfio-pci modules-load.d, and mlx5/IB
+# modules in the dracut config. No extra COPY or RUN needed.
 
-# kata-coldplug configuration: copy base config and enable cold_plug_vfio
-RUN mkdir -p /etc/kata-containers/kata-coldplug && \
-    cp /etc/kata-containers/configuration.toml /etc/kata-containers/kata-coldplug/configuration.toml && \
-    sed -i \
-      -e 's/^hot_plug_vfio = .*/# hot_plug_vfio = "no-port"/' \
-      -e 's/^cold_plug_vfio = .*/cold_plug_vfio = "root-port"/' \
-      /etc/kata-containers/kata-coldplug/configuration.toml
-
-# Add mlx5/InfiniBand kernel modules to kata guest initrd dracut config
-RUN echo 'drivers+=" mlx5_core mlxfw ib_core ib_uverbs ib_umad mlx5_ib "' >> \
-    /usr/libexec/kata-containers/osbuilder/dracut/dracut.conf.d/15-dracut.conf
+# Enable IOMMU via bootc kargs drop-in (required for vfio-pci on DPU nodes)
+RUN mkdir -p /usr/lib/bootc/kargs.d && \
+    echo 'kargs = ["intel_iommu=on", "iommu=pt"]' > /usr/lib/bootc/kargs.d/iommu.toml
 
 RUN ostree container commit

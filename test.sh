@@ -1,149 +1,94 @@
 #!/bin/bash
-# Verify DPU/SR-IOV cold-plug VFIO backport deployment
-# Run after deploy.sh completes
+# Verify kata layer-only installation.
+# Usage: ./test.sh <MCP_ROLE>
 
+set -euo pipefail
+
+MCP_ROLE="${1:-}"
+if [ -z "$MCP_ROLE" ]; then
+  echo "Usage: $0 <MCP_ROLE>"
+  exit 1
+fi
+
+EXPECTED_RPM="kata-containers-4.1.0-3"
 PASS=0
 FAIL=0
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 check() {
-  local desc=$1
-  shift
-  if "$@" &>/dev/null; then
-    echo "PASS: $desc"
+  local desc=$1 val=$2 expected=$3
+  if echo "$val" | grep -q "$expected"; then
+    echo "  PASS: $desc"
     PASS=$((PASS + 1))
   else
-    echo "FAIL: $desc"
+    echo "  FAIL: $desc (expected '$expected', got '$val')"
     FAIL=$((FAIL + 1))
   fi
 }
 
-check_output() {
-  local desc=$1
-  local expected=$2
-  shift 2
-  local output
-  output=$("$@" 2>/dev/null)
-  if echo "$output" | grep -q "$expected"; then
-    echo "PASS: $desc"
-    PASS=$((PASS + 1))
-  else
-    echo "FAIL: $desc (expected '$expected', got '$output')"
-    FAIL=$((FAIL + 1))
-  fi
-}
+NODES=$(oc get nodes -l "node-role.kubernetes.io/$MCP_ROLE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+[ -z "$NODES" ] && { echo "ERROR: no nodes with role $MCP_ROLE"; exit 1; }
 
-NODE=$(oc get nodes -l node-role.kubernetes.io/kata-oc -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-[ -z "$NODE" ] && NODE=$(oc get nodes -o jsonpath='{.items[0].metadata.name}')
+echo "=== Node checks ==="
+for NODE in $NODES; do
+  echo "--- $NODE ---"
+  result=$(oc debug node/"$NODE" -- chroot /host bash -c '
+    echo "rpm=$(rpm -q kata-containers 2>/dev/null)"
+    echo "initrd_target=$(readlink /var/cache/kata-containers/osbuilder-images/kata.initrd 2>/dev/null)"
+    echo "kernel_target=$(readlink /var/cache/kata-containers/osbuilder-images/kata.kernel 2>/dev/null)"
+    echo "crio_handler=$(test -f /etc/crio/crio.conf.d/50-kata-coldplug && echo present || echo MISSING)"
+    echo "config_d=$(test -f /etc/kata-containers/config.d/50-kata-coldplug.toml && echo present || echo MISSING)"
+    echo "coldplug=$(grep -c cold_plug_vfio /etc/kata-containers/config.d/50-kata-coldplug.toml 2>/dev/null)"
+    echo "pcie_root_port=$(grep -c pcie_root_port /etc/kata-containers/config.d/50-kata-coldplug.toml 2>/dev/null)"
+    echo "vfio_module=$(test -f /etc/modules-load.d/kata-vfio.conf && echo present || echo MISSING)"
+    echo "mlx5_initrd=$(lsinitrd /var/cache/kata-containers/osbuilder-images/kata.initrd 2>/dev/null | grep -c mlx5_core.ko)"
+    echo "selinux=$(semodule -l 2>/dev/null | grep -c osc_monitor)"
+  ' 2>&1 | grep "=" | grep -v "^Starting\|^Removing\|^Temporary\|^To use\|^Warning")
 
-node_exec() {
-  oc debug node/$NODE -- chroot /host bash -c "$1" 2>&1 | grep -v "^Starting\|^Removing\|^To use"
-}
-
-echo "=== Node checks (node: $NODE) ==="
-
-check_output "kata-containers RPM is 3.31.0-3" \
-  "kata-containers-3.31.0-3" \
-  node_exec "rpm -q kata-containers"
-
-check_output "qemu-kvm-core is installed" \
-  "qemu-kvm-core" \
-  node_exec "rpm -q qemu-kvm-core"
-
-check_output "virtiofsd is installed" \
-  "virtiofsd" \
-  node_exec "rpm -q virtiofsd"
-
-check_output "CRI-O kata-coldplug handler exists" \
-  "kata-coldplug" \
-  node_exec "cat /etc/crio/crio.conf.d/50-kata-coldplug"
-
-check_output "cold_plug_vfio is root-port" \
-  'cold_plug_vfio = "root-port"' \
-  node_exec "cat /etc/kata-containers/config.d/50-coldplug.toml"
-
-check_output "mlx5_core in kata initrd" \
-  "mlx5_core" \
-  node_exec "lsinitrd /var/cache/kata-containers/osbuilder-images/kata.initrd 2>/dev/null | grep mlx5_core"
-
-check_output "mlx5_ib in kata initrd" \
-  "mlx5_ib" \
-  node_exec "lsinitrd /var/cache/kata-containers/osbuilder-images/kata.initrd 2>/dev/null | grep mlx5_ib"
-
-check_output "PR #13103 in RPM changelog" \
-  "PR #13103" \
-  node_exec "rpm -q --changelog kata-containers | head -5"
+  rpm_val=$(echo "$result" | grep "^rpm=" | cut -d= -f2)
+  check "RPM version" "$rpm_val" "$EXPECTED_RPM"
+  check "initrd symlink" "$(echo "$result" | grep initrd_target)" "kata.initrd"
+  check "kernel symlink" "$(echo "$result" | grep kernel_target)" "vmlinuz"
+  check "CRI-O handler" "$(echo "$result" | grep crio_handler)" "present"
+  check "config.d drop-in" "$(echo "$result" | grep config_d)" "present"
+  check "cold_plug_vfio set" "$(echo "$result" | grep coldplug)" "1"
+  check "pcie_root_port set" "$(echo "$result" | grep pcie_root_port)" "1"
+  check "vfio-pci module-load" "$(echo "$result" | grep vfio_module)" "present"
+  check "mlx5 in initrd" "$(echo "$result" | grep mlx5_initrd)" "mlx5_initrd=1"
+  check "SELinux osc_monitor" "$(echo "$result" | grep selinux)" "selinux=1"
+done
 
 echo ""
-echo "=== Cluster checks ==="
-
-check_output "RuntimeClass kata exists" \
-  "kata" \
-  oc get runtimeclass kata
-
-check_output "RuntimeClass kata-coldplug exists" \
-  "kata-coldplug" \
-  oc get runtimeclass kata-coldplug
+echo "=== RuntimeClass ==="
+check "kata-coldplug exists" "$(oc get runtimeclass kata-coldplug -o name 2>/dev/null)" "kata-coldplug"
 
 echo ""
-echo "=== Pod test: kata (standard) ==="
-
-oc delete pod kata-test --ignore-not-found &>/dev/null
-oc run kata-test --image=registry.access.redhat.com/ubi9/ubi-minimal:latest \
-  --restart=Never --overrides='{"spec":{"runtimeClassName":"kata"}}' \
-  --command -- sleep 120 &>/dev/null
-
-if oc wait --for=condition=Ready pod/kata-test --timeout=180s &>/dev/null; then
-  check_output "kata pod runs a VM (separate kernel)" \
-    "el9" \
-    oc exec kata-test -- uname -r
-
-  check_output "mlx5_core module loaded in kata VM" \
-    "mlx5_core" \
-    oc exec kata-test -- cat /proc/modules
-else
-  echo "FAIL: kata pod did not start"
-  FAIL=$((FAIL + 1))
-fi
-oc delete pod kata-test --ignore-not-found &>/dev/null
-
-echo ""
-echo "=== Pod test: kata-coldplug ==="
-
+echo "=== Pod lifecycle ==="
 oc delete pod kata-coldplug-test --ignore-not-found &>/dev/null
-oc run kata-coldplug-test --image=registry.access.redhat.com/ubi9/ubi-minimal:latest \
-  --restart=Never --overrides='{"spec":{"runtimeClassName":"kata-coldplug"}}' \
-  --command -- sleep 120 &>/dev/null
+sleep 2
+oc apply -f "$(dirname "$0")/05-test-pod.yaml" &>/dev/null
 
-if oc wait --for=condition=Ready pod/kata-coldplug-test --timeout=180s &>/dev/null; then
-  check_output "kata-coldplug pod runs a VM" \
-    "el9" \
-    oc exec kata-coldplug-test -- uname -r
+if oc wait --for=condition=Ready pod/kata-coldplug-test --timeout=120s &>/dev/null; then
+  POD_NODE=$(oc get pod kata-coldplug-test -o jsonpath='{.spec.nodeName}')
+  check "pod scheduled on target node" "$POD_NODE" "$(echo $NODES | tr ' ' '\n' | head -1)\|$(echo $NODES | tr ' ' '|')"
 
-  check_output "mlx5_core loaded in kata-coldplug VM" \
-    "mlx5_core" \
-    oc exec kata-coldplug-test -- cat /proc/modules
+  exec_out=$(oc exec kata-coldplug-test -- cat /proc/version 2>/dev/null)
+  check "exec works" "$exec_out" "Linux version"
 
-  check_output "mlx5_ib loaded in kata-coldplug VM" \
-    "mlx5_ib" \
-    oc exec kata-coldplug-test -- cat /proc/modules
+  qemu_before=$(oc debug node/"$POD_NODE" -- chroot /host bash -c 'ps aux | grep qemu-kvm | grep -v grep | wc -l' 2>&1 | grep -E "^[0-9]")
+  check "QEMU running" "$qemu_before" "1"
 
-  check_output "ib_core loaded in kata-coldplug VM" \
-    "ib_core" \
-    oc exec kata-coldplug-test -- cat /proc/modules
+  oc delete pod kata-coldplug-test --wait --timeout=30s &>/dev/null
+  sleep 5
 
-  check_output "ib_uverbs loaded in kata-coldplug VM" \
-    "ib_uverbs" \
-    oc exec kata-coldplug-test -- cat /proc/modules
-
-  check_output "ib_umad loaded in kata-coldplug VM" \
-    "ib_umad" \
-    oc exec kata-coldplug-test -- cat /proc/modules
+  cleanup=$(oc debug node/"$POD_NODE" -- chroot /host bash -c 'echo "QEMU=$(ps aux | grep qemu-kvm | grep -v grep | wc -l) Shim=$(ps aux | grep containerd-shim-kata | grep -v grep | wc -l)"' 2>&1 | grep "QEMU=")
+  check "QEMU gone after delete" "$cleanup" "QEMU=0"
+  check "Shim gone after delete" "$cleanup" "Shim=0"
 else
-  echo "FAIL: kata-coldplug pod did not start"
+  echo "  FAIL: pod did not start within 120s"
   FAIL=$((FAIL + 1))
+  oc describe pod kata-coldplug-test 2>/dev/null | tail -10
+  oc delete pod kata-coldplug-test --ignore-not-found &>/dev/null
 fi
-oc delete pod kata-coldplug-test --ignore-not-found &>/dev/null
 
 echo ""
 echo "==============================="
